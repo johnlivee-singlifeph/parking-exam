@@ -31,7 +31,7 @@ parking.createSlots();
 
 
 
-let prompt = 'Select action [ p - park, u - unpark, m - map, x - exit ]:'
+let prompt = 'Select action [ p - park, u - unpark, m - map, r - reset, h - history, x - exit ]:'
 
 const rl = readline.createInterface({
     input: process.stdin,
@@ -52,27 +52,24 @@ rl.on('line', (line) => {
       rl.question('Vehicle size [ 0-S, 1-M, 2-L ]: ',  (vehicle_size) => {
           rl.question(`Entrance Point [ 0-A, 1-B, 2-C ] `, (entry_point) => {
               parking.park(Number(vehicle_size), Number(entry_point))
+              parking.drawMap();
               rl.prompt()
           })
       })
 
       break
 
-    case 'u':
-      // rl.question('Location of vehicle to unpark. Seperate by a space [row column]: ', function (loc) {
-      //     let strLoc = loc.trim().split(' ')
-
-      //     if ( strLoc.length >= 2 ) {
-      //         let row = strLoc[0]
-      //         let col = strLoc[1]
-      //         parking.unpark(row, col)
-      //         console.log('Vehicle unparked!')
-      //     }
-      // })
+    case 'r':
+      parking.reset();
+      parking.drawMap();
       break
     case 'm':
       parking.drawMap()
       break
+
+    case 'h':
+      parking.history();
+      break;
     default:
       break;
   }

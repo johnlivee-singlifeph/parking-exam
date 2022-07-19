@@ -1,5 +1,7 @@
-import { constants } from "buffer";
 
+const RATE_24H = 5000;
+const FLAT_RATE = 40;
+const MAX_FLAT_HOURS = 3;
 interface ParkingSlots {
     [key: string]: ParkingSlotData[];
 }
@@ -11,6 +13,9 @@ interface ParkingSlotData {
     distance: ParkingSlotDistance[];
     exceeding_hour_rate: number;
     vehicle?: Vehicle | undefined;
+    flat_rate: number;
+    rate_24h: number;
+    max_flat_hours: number;
 }
 
 interface ParkingSlotDistance {
@@ -23,8 +28,11 @@ interface VehicleOptions {
     id: number;
     entry_point: number;
     entry_date: Date | string;
+    exit_date?: Date | string;
+    exit: boolean;
     vehicle_size: number;
     amount?: number;
+    consumed_hours?: number;
 }
 
 
@@ -38,6 +46,7 @@ export enum ENTRY_POINTS {
     B = 1,
     C = 2,
 }
+const ENTRY_POINTS_DESCRIPTION = ['A','B','C'];
 
 /**
  * 0 = small
@@ -45,12 +54,18 @@ export enum ENTRY_POINTS {
  * 2 = large
  */
 const TYPE_DESCRIPTION = ['S','M','L'];
+const VEHICLE_DRAWING = ['🚗 ',  '🚙 ', '🚌 '];
+
 class DEFAULT_SLOTS {
     id: number;
     type: number;
     type_description: string;
     distance: ParkingSlotDistance[] = [];
     exceeding_hour_rate: number = 60;
+    flat_rate: number = FLAT_RATE;
+    rate_24h: number = RATE_24H;
+    exit: boolean = false;
+    max_flat_hours: number = MAX_FLAT_HOURS;
 
     constructor(type: number, counter: number) {
         this.id = counter;
@@ -65,18 +80,80 @@ class Vehicle {
         vehicle_size: -1,
         amount: 0,
         entry_date: '',
+        exit_date: '',
         entry_point: 0,
+        consumed_hours: 0,
+        exit: false,
     }
+
+    location: ParkingSlotData;
+
     constructor(options: any = {}) {
+        console.log('vh', 'c');
         this.options.id = Math.floor(Date.now() / 1000)
         this.options = Object.assign({}, this.options, options);
+        this.options.entry_date = new Date();
+        
+        if (options.slot) this.location = options.slot;
+    }
+
+    compute() {
+        if (this.location) {
+            /**
+             * ADD FLAT RATE
+             */
+            this.options.amount = this.location.flat_rate;
+
+            /**
+             * SIMULATE
+             * 2.5 hours
+             */
+            const date = new Date()
+            date.setHours( date.getHours() + 24 );
+            date.setMinutes( date.getMinutes() + 30);
+            const today = date.getTime();
+            const entry_date = new Date(this.options.entry_date).getTime();
+
+            /**
+             * COMPUTE ALL DIFF IN HOURS
+             */
+            const diff = Math.abs(entry_date - today) / 36e5;
+            this.options.consumed_hours = Math.round(diff);
+
+            /**
+             * DETECT 24HOURS
+             * amount = 5000 * detect_24hrs (2) = 10000;
+             */
+            let detect_24hours = this.options.consumed_hours / 24;
+            if (detect_24hours >= 1) {
+                detect_24hours = Math.trunc(detect_24hours);
+                this.options.amount += this.location.rate_24h * detect_24hours;
+            } else detect_24hours = 0;
+
+            /**
+             * CHECK IF FLAT RATE HAS ALREADY PASSED
+             * 49 > 3 = true
+             */
+            if (this.options.consumed_hours > this.location.max_flat_hours) {
+                /**
+                 * REMOVE 24hours and get exceeding hours
+                 * 49.4 - 48 = 1.4
+                 * 1.4 - 3 = -2.4
+                 * 
+                 * 
+                 * 59.2 - 48 = 11.2
+                 * 11.2 - 3 = 8.2
+                 */
+                const exceeding_hours = Math.round(this.options.consumed_hours - (detect_24hours * 24) - this.location.max_flat_hours);
+                if (exceeding_hours > 0) this.options.amount += this.location.exceeding_hour_rate * exceeding_hours;
+            }
+            
+        }
     }
 }
 
 export class Parking {
     private MAX_SLOTS_PER_ENTRY = 3;
-    private RATE_24H = 5000;
-    private FLAT_RATE = 40;
    
     /**
      * DEFAULT PARKING SLOTS PLACEHOLDER
@@ -118,15 +195,20 @@ export class Parking {
             
             for (let i = 0; i < current_slot.length; i++) {
                 const slot = current_slot[i];
+                let vehicle = '   ';
+                if (slot.vehicle) {
+                    vehicle = VEHICLE_DRAWING[slot.vehicle.options.vehicle_size];
+                }
+
                 if (i === 0) {
 strings.push(`
 ------
-${slot.type_description}  ${slot.vehicle ? '🚗' : ''}  <${key}>`);
+${slot.type_description}  ${vehicle}  <${key}>`);
                 }
                 else {
 strings.push(`
 ------
-${slot.type_description}  ${slot.vehicle ? '🚗' : ''} `);
+${slot.type_description}  ${vehicle} `);
                 }
             }
         }
@@ -222,14 +304,18 @@ strings.push(`
         this.checkSlot(vehicle);
     }
 
-    checkSlot(vehicle: Vehicle): void {
-        /**
-         * CONST FLATTEN SLOTS
-         */
+    flattenSlots(): ParkingSlotData[] {
         const slot: any = Object.keys(this.SLOTS).map((key, index) => {
             return this.SLOTS[key];
         });
-        const flattened = [].concat.apply([],slot);
+       return [].concat.apply([],slot);
+    }
+
+    checkSlot(vehicle: Vehicle): void {
+        /**
+         * FLATTEN SLOTS
+         */
+        const flattened = this.flattenSlots();
        
         /**
          * FILTER
@@ -244,33 +330,92 @@ strings.push(`
          * 2. Sort by distance from entry point
          */
         const filtered_slots = flattened.filter((slot: ParkingSlotData) => {
-            return !slot.vehicle && vehicle.options.vehicle_size  <= slot.type && slot.distance.filter((distance: ParkingSlotDistance) => distance.x === vehicle.options.entry_point).length;
-        }).map((mapped: ParkingSlotData) => {
-            mapped.distance = mapped.distance.filter((distance: ParkingSlotDistance) => distance.x === vehicle.options.entry_point);
+            return !slot.vehicle && vehicle.options.vehicle_size  <= slot.type;
+        })
+        .map((mapped: ParkingSlotData) => {
             return mapped;
-        }).sort((a, b) => {
-            return a.type - b.type;
-        }).sort((a,b) => {
-            return a.distance[0].y -b.distance[0].y;
+        })
+        .sort((a, b) => {
+            return b.type - a.type;
+        })
+        .sort((a, b) => {
+            /**
+             * TEMPORARY SOLUTION TO AVOID MUTATION USING map method
+             */
+            const a_index = a.distance.findIndex((distance: ParkingSlotDistance) => distance.x === vehicle.options.entry_point);
+            const b_index = a.distance.findIndex((distance: ParkingSlotDistance) => distance.x === vehicle.options.entry_point);
+            if (a_index !== -1 && b_index !== -1) return a.distance[a_index].y - b.distance[b_index].y;
+            
+            return -1;
         });
-        console.log(filtered_slots);
+        // console.log('filtered', filtered_slots);
         
         const chosen_slot = filtered_slots.shift();
+        // console.log('chosen_flot', chosen_slot);
         if(chosen_slot) {
+            /**
+             * REGISTER ASSIGNED SLOT TO VEHICLE
+             */
+            vehicle.location = chosen_slot;
+
+            /**
+             * REGISTER VEHIVLE TO ASSIGNED SLOT
+             */
             chosen_slot.vehicle = vehicle;
             this.updateSlot(chosen_slot);
         }
-        else console.error('No parking slot found');
+        else console.error('🚫 FULL PARKING 🚫');
     }
 
     updateSlot(chosen_slot: ParkingSlotData): void {
         for (let key in this.SLOTS) {
             const current_slot = this.SLOTS[key];
             const index = current_slot.findIndex((slot: ParkingSlotData) => slot.id === chosen_slot.id);
-            if (index !== -1) this.SLOTS[key][index] = chosen_slot;
+            if (index !== -1) {
+                chosen_slot.vehicle?.compute();
+                this.SLOTS[key][index].vehicle = chosen_slot.vehicle;
+            }
         }
 
-        // this.drawMap();
+        console.log(VEHICLE_DRAWING[chosen_slot.vehicle?.options.vehicle_size ?? 0], `ID: ${chosen_slot.vehicle?.options.id}`);
+    }
+
+    reset(): void {
+        for (let key in this.SLOTS) {
+            if (this.SLOTS[key].length) {
+                for (let i = 0 ; i < this.SLOTS[key].length; i++) {
+                    this.SLOTS[key][i].vehicle = undefined;
+                }
+            }
+        }
+    }
+
+    history(): void {
+        const flattened = this.flattenSlots();
+
+        const filtered_slots = flattened.filter((slot: ParkingSlotData) => {
+            return slot.vehicle;
+        });
+
+        const table_data: any = [];
+        if (filtered_slots.length) {
+            filtered_slots.forEach((item: ParkingSlotData) => {
+                item.vehicle?.compute();
+                table_data.push(
+                    {
+                        'ID': item.vehicle?.options.id,
+                        'Type': TYPE_DESCRIPTION[item.vehicle?.options?.vehicle_size ?? 0],
+                        'Entry Point': ENTRY_POINTS_DESCRIPTION[item.vehicle?.options.entry_point ?? 0],
+                        'Location': item.vehicle?.location.id,
+                        'Date': new Date(),
+                        'Entry Point Date': item.vehicle?.options?.entry_date ?? '',
+                        'Exit Date': item.vehicle?.options?.exit ? item.vehicle?.options?.entry_date ?? '' : '--',
+                        'Consumed Hours': item.vehicle?.options.consumed_hours ?? 0,
+                        'Amount': item.vehicle?.options.amount,
+                    });
+            })
+        }
+        console.table(table_data);
     }
 }
 
