@@ -33,7 +33,7 @@ parking.createSlots();
 
 let prompt = 'Select action [ p - park, u - unpark, m - map, r - reset, h - history, x - exit ]:'
 
-const rl = readline.createInterface({
+export const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
     prompt
@@ -58,6 +58,12 @@ rl.on('line', (line) => {
       })
 
       break
+
+    case 'u':
+        rl.question('Vehicle ID you want to unpark: ', (id) => {
+            parking.unpark(Number(id));
+        })
+        break
 
     case 'r':
       parking.reset();
