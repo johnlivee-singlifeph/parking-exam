@@ -10,7 +10,7 @@
     "allowJs" : true,
     "module": "commonjs",
     "esModuleInterop": true,
-    "outDir": "./build",
+    "outDir": "./dist",
     "rootDir": "./",
     "target": "es6",
     "lib": [
